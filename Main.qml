@@ -123,20 +123,20 @@ Rectangle {
         z: -500 
     }
     
-    // Rectangle { 
-    //     anchors.fill: parent
-    //     z: -300
-    //     gradient: Gradient { 
-    //         GradientStop {
-    //             position: 0.0
-    //             color: "#45000000"
-    //         }
-    //         GradientStop {
-    //             position: 1.0
-    //             color: "#75000000"
-    //         }
-    //     } 
-    // }
+    Rectangle { 
+        anchors.fill: parent
+        z: -300
+        gradient: Gradient { 
+            GradientStop {
+                position: 0.0
+                color: '#1f000000'
+            }
+            GradientStop {
+                position: 1.0
+                color: '#38000000'
+            }
+        } 
+    }
 
     // Clock Widget
     Item {
