@@ -17,5 +17,5 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
 fi
 
 if [ "$1" = "-setBG" ]; then
-    sudo mv "$3" /usr/share/sddm/themes/Multi_Background/$2.mp4
+    sudo cp "$3" /usr/share/sddm/themes/Multi_Background/$2.mp4
 fi
