@@ -102,7 +102,7 @@ Rectangle {
             if (userHelper.currentItem && userHelper.currentItem.uLogin !== "") {
                 return Qt.resolvedUrl(userHelper.currentItem.uLogin + ".mp4")
             }
-            return Qt.resolvedUrl("Lynx.mp4")
+            return Qt.resolvedUrl("default.mp4")
         }
 
         videoOutput: bgVideo
