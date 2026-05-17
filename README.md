@@ -8,19 +8,13 @@ A custom **SDDM (Simple Desktop Display Manager)** theme that dynamically change
 
 ---
 
-## ✨ Features
-
-- 👤 **Per-user background support**
-- 🎨 Clean and customizable UI
-- ⚡ Lightweight and fast
-- 🖼️ Supports images / videos (if configured)
-- 🛠️ Easy to extend for more users
-
----
-
 ## 📸 Preview
 
-[Preview](./preview/preview.mp4)
+
+
+https://github.com/user-attachments/assets/3380a83c-f4ff-4340-9b52-448b717a18b8
+
+
 
 ---
 
@@ -44,4 +38,3 @@ cd /usr/share/sddm/themes/Multi_Background
 ./MultiBG.sh -setBG ocean ~/Videos/ocean.mp4
 ```
 
-> Make sure that you have `sudo` privileges since the script writes to a system directory.
