@@ -3,7 +3,9 @@
 A custom **SDDM (Simple Desktop Display Manager)** theme that dynamically changes the background based on the selected user.
 
 > 🔥 Each user gets their own personalized login screen background.
+
 ## Theme from qylock by Darkkal44 : https://github.com/Darkkal44/qylock
+
 ---
 
 ## ✨ Features
@@ -18,7 +20,7 @@ A custom **SDDM (Simple Desktop Display Manager)** theme that dynamically change
 
 ## 📸 Preview
 
-> Add screenshots here later
+[Preview](./preview/preview.mp4)
 
 ---
 
@@ -29,4 +31,3 @@ This theme detects the currently selected user in SDDM and dynamically switches 
 Each user is mapped to a specific background file inside the theme.
 
 ---
-
