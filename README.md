@@ -24,10 +24,24 @@ A custom **SDDM (Simple Desktop Display Manager)** theme that dynamically change
 
 ---
 
-## ⚙️ How It Works
+## ⚙️ Setting an SDDM Background Video
 
-This theme detects the currently selected user in SDDM and dynamically switches the background accordingly.
+Use the script with the `-setBG` flag followed by the username and the path to the `.mp4` video file.
 
-Each user is mapped to a specific background file inside the theme.
+### Syntax
 
----
+```bash
+cd /usr/share/sddm/themes/Multi_Background
+```
+
+```bash
+./MultiBG.sh -setBG <username> <video_file>
+```
+
+### Example
+
+```bash
+./MultiBG.sh -setBG ocean ~/Videos/ocean.mp4
+```
+
+> Make sure that you have `sudo` privileges since the script writes to a system directory.
