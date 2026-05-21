@@ -96,17 +96,27 @@ Rectangle {
         z: -1000
     }
     
-    MediaPlayer { 
+    MediaPlayer {
         id: player
-        source: {
-            if (userHelper.currentItem && userHelper.currentItem.uLogin !== "") {
-                return Qt.resolvedUrl(userHelper.currentItem.uLogin + ".mp4")
-            }
-            return Qt.resolvedUrl("default.mp4")
-        }
+
+        property string userVideo:
+            (userHelper.currentItem && userHelper.currentItem.uLogin !== "")
+            ? Qt.resolvedUrl(userHelper.currentItem.uLogin + ".mp4")
+            : ""
+
+        source: userVideo !== "" ? userVideo : Qt.resolvedUrl("default.mp4")
 
         videoOutput: bgVideo
         loops: MediaPlayer.Infinite
+
+        onErrorOccurred: function(error, errorString) {
+            console.log("Video error:", errorString)
+
+            if (source !== Qt.resolvedUrl("default.mp4")) {
+                source = Qt.resolvedUrl("default.mp4")
+                play()
+            }
+        }
 
         onSourceChanged: {
             stop()
