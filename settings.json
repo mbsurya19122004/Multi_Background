@@ -1,0 +1,14 @@
+{
+  "accent": "#c9a063",
+  "textColor": "#ffffff",
+  "errorColor": "#ff7a7a",
+  "fontFamily": "",
+  "clockFormat": "HH:mm",
+  "dateFormat": "dddd, MMMM d",
+  "clockSize": 200,
+  "dateSize": 30,
+  "showOrbit": true,
+  "dim": 0.25,
+  "passwordHint": "Enter Password",
+  "errorText": "Incorrect password"
+}
