@@ -11,9 +11,13 @@ THEME_DIR="${MULTIBG_THEME_DIR:-/usr/share/sddm/themes/$THEME}"
 AVATAR_DIR="$SCRIPT_DIR/avatars"
 AVATAR_SIZE=512
 
+SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+
 # When launched from the GUI, sudo gets its password from SUDO_ASKPASS.
-# In a normal terminal this does nothing special.
-sudo() { command sudo ${SUDO_ASKPASS:+-A} "$@"; }
+# In a normal terminal this does nothing special. Already root: just run it.
+sudo() {
+    if [ "$(id -u)" -eq 0 ]; then "$@"; else command sudo ${SUDO_ASKPASS:+-A} "$@"; fi
+}
 
 # Run a command with sudo only when the folder it writes to is not writable by us.
 # usage: as_needed <dir> <command...>
@@ -32,10 +36,12 @@ inside_theme() {
 
 launch_gui() {
     local py="$SCRIPT_DIR/multibg_gui.py"
-    if [ ! -f "$py" ] || ! python3 -c 'import PySide6' 2>/dev/null; then
-        echo "The GUI needs PySide6 (Arch: sudo pacman -S pyside6) and multibg_gui.py next to this script." >&2
-        echo >&2
-        usage
+    if [ ! -f "$py" ] || ! gui_python_ok; then
+        local msg="The GUI needs PySide6 and multibg_gui.py next to this script. Run: $SELF -install  (installs all dependencies)"
+        echo "$msg" >&2
+        # Started from an app menu (no terminal): a desktop notification is the only way to tell the user
+        [ -t 2 ] || { command -v notify-send >/dev/null 2>&1 && notify-send "Multi_Background" "$msg"; }
+        [ -t 2 ] && { echo >&2; usage; }
         return 1
     fi
     MULTIBG_SCRIPT="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")" exec python3 "$py"
@@ -45,7 +51,7 @@ usage() {
 echo "Usage:"
 echo "  $0                (no arguments: opens the settings GUI)"
 echo "  $0 -gui"
-echo "  $0 -install"
+echo "  $0 -install [--no-deps]"
 echo "  $0 -avatars"
 echo "  $0 -setAvatar <name> <image_file>"
 echo "  $0 -setBG <name|default> <video_or_image_file>"
@@ -60,17 +66,22 @@ echo "  background videos for users."
 echo
 echo "Flags:"
 echo "  -gui"
-echo "      Opens the graphical settings window (needs PySide6)."
+echo "      Opens the graphical settings window (needs PySide6; -install sets it up)."
 echo "      It also edits the look of the theme: accent color, clock"
 echo "      format, font, dimming, texts (saved in ThemeSettings.qml)."
 echo
 echo "  -install"
-echo "      The only command that touches /usr/share. Builds the avatars,"
-echo "      then copies this folder to:"
-echo "      /usr/share/sddm/themes/Multi_Background"
-echo
-echo "      Also sets the theme as the current SDDM theme"
-echo "      by updating the SDDM configuration."
+echo "      Full setup in one go:"
+echo "        1. Installs all missing dependencies automatically (sddm, Qt6"
+echo "           Qt5Compat/QtMultimedia, PySide6, ImageMagick, ffmpeg) using"
+echo "           pacman, apt, dnf or zypper (PySide6 falls back to pip)."
+echo "           Use --no-deps to skip this step."
+echo "        2. Builds the avatars, then copies this folder to:"
+echo "           /usr/share/sddm/themes/Multi_Background"
+echo "        3. Sets the theme as the current SDDM theme."
+echo "        4. Adds the settings GUI as a desktop app: an application-menu"
+echo "           entry 'Multi_Background Settings' plus the command"
+echo "           multibg-settings (the GUI runs from THIS folder, keep it)."
 echo
 echo "  -preview"
 echo "      Runs sddm-greeter in test mode on THIS folder, so you can"
@@ -124,6 +135,193 @@ echo "  $0 -setAvatar kashi ~/Pictures/me.png"
 echo "  $0 -setBG default ~/Videos/city.mp4"
 echo "  $0 -setBG default ~/Pictures/wall.png"
 echo "  $0 -setBG kashi ~/Videos/ocean.mp4"
+}
+
+# ───────────────────────── dependencies (used by -install) ─────────────────────────
+
+# True when PySide6 (with the parts the GUI uses) can be imported.
+gui_python_ok() {
+    python3 -c 'import PySide6.QtWidgets, PySide6.QtQml, PySide6.QtQuick, PySide6.QtNetwork' 2>/dev/null
+}
+
+# Echoes the first supported package manager found on this system.
+detect_pm() {
+    local pm
+    for pm in pacman apt-get dnf zypper; do
+        command -v "$pm" >/dev/null 2>&1 && { echo "$pm"; return 0; }
+    done
+    return 1
+}
+
+# True when the Qt6 QML modules Main.qml and the GUI import are present.
+qt_qml_ok() {
+    local d
+    for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml /usr/lib/*-linux-gnu/qt6/qml; do
+        [ -d "$d" ] || continue
+        [ -d "$d/Qt5Compat/GraphicalEffects" ] && [ -d "$d/QtMultimedia" ] && return 0
+    done
+    return 1
+}
+
+# Prints one line per missing dependency (nothing printed = everything is there).
+missing_deps() {
+    command -v sddm >/dev/null 2>&1 || echo "sddm"
+    command -v python3 >/dev/null 2>&1 || echo "python3"
+    gui_python_ok || echo "PySide6"
+    qt_qml_ok || echo "Qt6 Qt5Compat + QtMultimedia"
+    { command -v magick >/dev/null 2>&1 || command -v convert >/dev/null 2>&1; } || echo "ImageMagick"
+    command -v ffmpeg >/dev/null 2>&1 || echo "ffmpeg"
+    command -v file >/dev/null 2>&1 || echo "file"
+}
+
+# Install the packages given as arguments with the system package manager.
+# One bulk install first; if it fails (e.g. a package name doesn't exist on this
+# distro version) every package is retried on its own so one bad name can't block the rest.
+pm_install() {
+    local pm="$1"; shift
+    local -a cmd
+    case "$pm" in
+        pacman)  cmd=(pacman -S --needed --noconfirm) ;;
+        apt-get) cmd=(env DEBIAN_FRONTEND=noninteractive apt-get install -y) ;;
+        dnf)     cmd=(dnf install -y) ;;
+        zypper)  cmd=(zypper --non-interactive install) ;;
+        *)       return 1 ;;
+    esac
+
+    sudo "${cmd[@]}" "$@" && return 0
+
+    echo "Bulk install failed - retrying one package at a time..." >&2
+    local p failed=()
+    for p in "$@"; do
+        sudo "${cmd[@]}" "$p" >/dev/null 2>&1 && echo "  + $p" || { echo "  ! $p (not available)" >&2; failed+=("$p"); }
+    done
+    [ "${#failed[@]}" -eq 0 ]
+}
+
+# Installs everything the theme and the settings GUI need. Safe to run repeatedly;
+# does nothing when all dependencies are already present.
+install_dependencies() {
+    local missing
+    missing=$(missing_deps)
+    if [ -z "$missing" ]; then
+        echo "Dependencies: all present."
+        return 0
+    fi
+
+    echo "Missing dependencies:"
+    echo "$missing" | sed 's/^/  - /'
+
+    local pm pkgs=()
+    if ! pm=$(detect_pm); then
+        echo "No supported package manager (pacman, apt, dnf, zypper) found - please install the items above manually." >&2
+        return 1
+    fi
+    echo "Installing with $pm ..."
+
+    case "$pm" in
+        pacman)
+            pkgs=(sddm python pyside6 qt6-declarative qt6-5compat qt6-multimedia qt6-multimedia-ffmpeg qt6-svg imagemagick ffmpeg file) ;;
+        apt-get)
+            sudo apt-get update -qq
+            pkgs=(sddm python3 python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick python3-pyside6.qtnetwork
+                  qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts
+                  qml6-module-qtquick-shapes qml6-module-qt-labs-folderlistmodel qml6-module-qt5compat-graphicaleffects
+                  qml6-module-qtmultimedia imagemagick ffmpeg file) ;;
+        dnf)
+            pkgs=(sddm python3 python3-pyside6 qt6-qtdeclarative qt6-qt5compat qt6-qtmultimedia qt6-qtsvg ImageMagick ffmpeg-free file) ;;
+        zypper)
+            pkgs=(sddm-qt6 python3 python3-pyside6 qt6-declarative-imports qt6-qt5compat-imports qt6-multimedia-imports ImageMagick ffmpeg file) ;;
+    esac
+    pm_install "$pm" "${pkgs[@]}" || echo "Some packages could not be installed (see above)." >&2
+
+    # PySide6 not in the distro repos (or older distro): fall back to pip for the current user
+    if ! gui_python_ok; then
+        echo "PySide6 not available from $pm - trying pip (user install)..."
+        python3 -m pip install --user PySide6 2>/dev/null \
+            || python3 -m pip install --user --break-system-packages PySide6 \
+            || echo "pip could not install PySide6 either." >&2
+    fi
+
+    missing=$(missing_deps)
+    if [ -n "$missing" ]; then
+        echo
+        echo "Still missing after installation (install these manually):" >&2
+        echo "$missing" | sed 's/^/  - /' >&2
+        return 1
+    fi
+    echo "Dependencies: all installed."
+}
+
+# ───────────────────────── GUI as a desktop app (used by -install) ─────────────────────────
+
+# Home of the real user, even when the script itself was started with sudo.
+real_home() {
+    if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        getent passwd "$SUDO_USER" | cut -d: -f6
+    else
+        echo "$HOME"
+    fi
+}
+
+# Registers the settings GUI like a normal app: application-menu entry + icon,
+# and a `multibg-settings` command. The launcher points at THIS folder, which is
+# where the GUI reads and writes everything - so keep this folder in place.
+install_desktop_app() {
+    local home data bin owner=""
+    home=$(real_home)
+    [ -n "$home" ] && [ -d "$home" ] || { echo "Could not find a home directory - skipped desktop entry." >&2; return 1; }
+    data="${XDG_DATA_HOME:-$home/.local/share}"
+    [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ] && { owner="$SUDO_USER"; data="$home/.local/share"; }
+    bin="$home/.local/bin"
+
+    mkdir -p "$data/applications" "$data/icons/hicolor/scalable/apps" "$bin" || return 1
+
+    cat > "$data/icons/hicolor/scalable/apps/multibg-settings.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2b2418"/><stop offset="1" stop-color="#0d0b08"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#g)"/>
+  <rect x="22" y="30" width="84" height="56" rx="8" fill="none" stroke="#c9a063" stroke-width="6"/>
+  <path d="M22 76l22-20 18 16 14-12 30 24" fill="none" stroke="#e0b878" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="84" cy="48" r="7" fill="#e0b878"/>
+  <rect x="44" y="96" width="40" height="6" rx="3" fill="#c9a063"/>
+</svg>
+SVG
+
+    cat > "$data/applications/multibg-settings.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Multi_Background Settings
+Exec=bash "/usr/share/sddm/themes/Multi_Background/MultiBG.bash"
+Icon=multibg-settings
+Terminal=false
+Categories=Settings;
+DESKTOP
+    chmod 755 "$data/applications/multibg-settings.desktop"
+
+    cat > "$bin/multibg-settings" <<LAUNCHER
+#!/bin/bash
+exec bash "$SELF" -gui "\$@"
+LAUNCHER
+    chmod 755 "$bin/multibg-settings"
+
+    # Files made while running as root via sudo must belong to the real user
+    [ -n "$owner" ] && chown "$owner": "$data/applications/multibg-settings.desktop" \
+        "$data/icons/hicolor/scalable/apps/multibg-settings.svg" "$bin/multibg-settings" 2>/dev/null
+
+    command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$data/applications" >/dev/null 2>&1
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$data/icons/hicolor" >/dev/null 2>&1
+
+    echo "+ desktop app: $data/applications/multibg-settings.desktop"
+    echo "+ command:     $bin/multibg-settings"
+    case ":$PATH:" in
+        *":$bin:"*) ;;
+        *) echo "  (add $bin to your PATH to use the 'multibg-settings' command; the app menu entry works already)" ;;
+    esac
+    echo "  The app runs from $SCRIPT_DIR - don't move or delete that folder."
 }
 
 # Square-crop + convert any image to a 512x512 png (works on a temp copy, so the
@@ -417,7 +615,15 @@ case "$1" in
         ;;
 
     -install)
-        # Avatars are built in this folder first, then everything is copied together
+        # 1. Dependencies (skip with: -install --no-deps)
+        if [ "$2" = "--no-deps" ]; then
+            echo "Skipping dependency installation (--no-deps)."
+        else
+            install_dependencies || echo "Continuing anyway - some features may not work until the missing items are installed." >&2
+        fi
+        echo
+
+        # 2. Avatars are built in this folder first, then everything is copied together
         install_avatars
 
         sudo mkdir -p "$THEME_DIR"
@@ -431,10 +637,17 @@ case "$1" in
 
         sudo cp -r "$SCRIPT_DIR"/* "$THEME_DIR/"
 
-        # Make the theme the active one (own drop-in file; doesn't overwrite /etc/sddm.conf)
+        # 3. Make the theme the active one (own drop-in file; doesn't overwrite /etc/sddm.conf)
         sudo mkdir -p /etc/sddm.conf.d
         echo "[Theme]
 Current=$THEME" | sudo tee /etc/sddm.conf.d/10-theme.conf
+
+        # 4. Settings GUI as a desktop app (app menu entry + `multibg-settings` command)
+        echo
+        install_desktop_app
+
+        echo
+        echo "Done. Open \"Multi_Background Settings\" from your application menu (or run: $0 -gui)."
         ;;
 
     *)

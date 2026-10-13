@@ -28,7 +28,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
 HERE = Path(__file__).resolve().parent
-SCRIPT = Path(os.environ.get("MULTIBG_SCRIPT", HERE / "multibg.bash"))
+SCRIPT = Path(os.environ.get("MULTIBG_SCRIPT", HERE / "MultiBG.bash"))
 THEME = "Multi_Background"
 THEME_DIR = Path(os.environ.get("MULTIBG_THEME_DIR", f"/usr/share/sddm/themes/{THEME}"))
 AVATAR_DIR = HERE / "avatars"

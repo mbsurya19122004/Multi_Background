@@ -27,6 +27,16 @@ cd Multi_Background
 chmod +x MultiBG.bash
 ./MultiBG.bash -install
 ```
+
+`-install` does the whole setup in one go:
+
+1. **Installs all dependencies automatically** (only what is missing): `sddm`, Qt6 `Qt5Compat` + `QtMultimedia`, `PySide6`, `ImageMagick`, `ffmpeg`. Supports **pacman** (Arch), **apt** (Debian/Ubuntu), **dnf** (Fedora) and **zypper** (openSUSE); PySide6 falls back to `pip` if your distro doesn't package it. Skip this step with `./MultiBG.bash -install --no-deps`.
+2. Builds the profile pictures and copies the theme to `/usr/share/sddm/themes/Multi_Background`.
+3. Sets it as the active SDDM theme.
+4. **Adds the settings GUI as a desktop app**: search for **Multi_Background Settings** in your application menu, or run `multibg-settings` (or `./MultiBG.bash -gui`).
+
+> The GUI edits the files in the folder you cloned, so keep that folder in place. Press **Install** in the GUI (or re-run `./MultiBG.bash -install`) to apply changes to SDDM.
+
 ---
 
 ## ⚙️ Setting an SDDM Background Video
