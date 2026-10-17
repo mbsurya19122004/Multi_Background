@@ -13,10 +13,26 @@ AVATAR_SIZE=512
 
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
-# When launched from the GUI, sudo gets its password from SUDO_ASKPASS.
-# In a normal terminal this does nothing special. Already root: just run it.
+# Privilege escalation, in this order:
+#   1. already root            -> run directly
+#   2. SUDO_ASKPASS is set     -> sudo -A (the GUI does this)
+#   3. no terminal + pkexec    -> pkexec (graphical polkit password prompt, e.g. app-menu launch)
+#   4. otherwise               -> plain sudo (asks in the terminal)
 sudo() {
-    if [ "$(id -u)" -eq 0 ]; then "$@"; else command sudo ${SUDO_ASKPASS:+-A} "$@"; fi
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif [ -z "$SUDO_ASKPASS" ] && [ ! -t 0 ] && command -v pkexec >/dev/null 2>&1; then
+        pkexec "$@"
+    else
+        command sudo ${SUDO_ASKPASS:+-A} "$@"
+    fi
+}
+
+# Print a message and, when there is no terminal (app-menu launch), also show a desktop notification.
+say() {
+    echo "$*"
+    [ -t 2 ] || { command -v notify-send >/dev/null 2>&1 && notify-send "Multi_Background" "$*" 2>/dev/null; }
+    return 0
 }
 
 # Run a command with sudo only when the folder it writes to is not writable by us.
@@ -37,7 +53,7 @@ inside_theme() {
 launch_gui() {
     local py="$SCRIPT_DIR/multibg_gui.py"
     if [ ! -f "$py" ] || ! gui_python_ok; then
-        local msg="The GUI needs PySide6 and multibg_gui.py next to this script. Run: $SELF -install  (installs all dependencies)"
+        local msg="The GUI needs PySide6 and multibg_gui.py next to this script. Automatic installation did not succeed - run: $SELF -install  (installs all dependencies)"
         echo "$msg" >&2
         # Started from an app menu (no terminal): a desktop notification is the only way to tell the user
         [ -t 2 ] || { command -v notify-send >/dev/null 2>&1 && notify-send "Multi_Background" "$msg"; }
@@ -64,9 +80,14 @@ echo "  Installs the Multi_Background SDDM theme, builds profile"
 echo "  pictures for every user, and allows setting custom"
 echo "  background videos for users."
 echo
+echo "  Missing dependencies (sddm, Qt6 modules, PySide6, ImageMagick, ffmpeg)"
+echo "  are installed automatically the first time this script is run,"
+echo "  on Arch (pacman) and Fedora (dnf); apt and zypper also work."
+echo "  Use '-install --no-deps' to skip this."
+echo
 echo "Flags:"
 echo "  -gui"
-echo "      Opens the graphical settings window (needs PySide6; -install sets it up)."
+echo "      Opens the graphical settings window (PySide6 is installed automatically)."
 echo "      It also edits the look of the theme: accent color, clock"
 echo "      format, font, dimming, texts (saved in ThemeSettings.qml)."
 echo
@@ -74,7 +95,7 @@ echo "  -install"
 echo "      Full setup in one go:"
 echo "        1. Installs all missing dependencies automatically (sddm, Qt6"
 echo "           Qt5Compat/QtMultimedia, PySide6, ImageMagick, ffmpeg) using"
-echo "           pacman, apt, dnf or zypper (PySide6 falls back to pip)."
+echo "           pacman, dnf, apt or zypper (PySide6 falls back to pip)."
 echo "           Use --no-deps to skip this step."
 echo "        2. Builds the avatars, then copies this folder to:"
 echo "           /usr/share/sddm/themes/Multi_Background"
@@ -137,7 +158,7 @@ echo "  $0 -setBG default ~/Pictures/wall.png"
 echo "  $0 -setBG kashi ~/Videos/ocean.mp4"
 }
 
-# ───────────────────────── dependencies (used by -install) ─────────────────────────
+# ───────────────────────── dependencies (run automatically on start) ─────────────────────────
 
 # True when PySide6 (with the parts the GUI uses) can be imported.
 gui_python_ok() {
@@ -145,15 +166,17 @@ gui_python_ok() {
 }
 
 # Echoes the first supported package manager found on this system.
+# pacman = Arch (and derivatives), dnf = Fedora (dnf4 and dnf5).
 detect_pm() {
     local pm
-    for pm in pacman apt-get dnf zypper; do
+    for pm in pacman dnf apt-get zypper; do
         command -v "$pm" >/dev/null 2>&1 && { echo "$pm"; return 0; }
     done
     return 1
 }
 
 # True when the Qt6 QML modules Main.qml and the GUI import are present.
+# Arch: /usr/lib/qt6/qml   Fedora: /usr/lib64/qt6/qml   Debian/Ubuntu: /usr/lib/<arch>/qt6/qml
 qt_qml_ok() {
     local d
     for d in /usr/lib/qt6/qml /usr/lib64/qt6/qml /usr/lib/*-linux-gnu/qt6/qml; do
@@ -198,6 +221,14 @@ pm_install() {
     [ "${#failed[@]}" -eq 0 ]
 }
 
+# pip fallback for PySide6, installed for the real user (not root, even under sudo).
+pip_install_pyside6() {
+    local -a as_user=()
+    [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ] && command -v runuser >/dev/null 2>&1 && as_user=(runuser -u "$SUDO_USER" --)
+    "${as_user[@]}" python3 -m pip install --user PySide6 2>/dev/null \
+        || "${as_user[@]}" python3 -m pip install --user --break-system-packages PySide6
+}
+
 # Installs everything the theme and the settings GUI need. Safe to run repeatedly;
 # does nothing when all dependencies are already present.
 install_dependencies() {
@@ -208,48 +239,53 @@ install_dependencies() {
         return 0
     fi
 
-    echo "Missing dependencies:"
-    echo "$missing" | sed 's/^/  - /'
+    say "Installing missing dependencies: $(echo "$missing" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
 
     local pm pkgs=()
     if ! pm=$(detect_pm); then
-        echo "No supported package manager (pacman, apt, dnf, zypper) found - please install the items above manually." >&2
+        echo "No supported package manager (pacman, dnf, apt, zypper) found - please install the items above manually." >&2
         return 1
     fi
     echo "Installing with $pm ..."
 
     case "$pm" in
-        pacman)
-            pkgs=(sddm python pyside6 qt6-declarative qt6-5compat qt6-multimedia qt6-multimedia-ffmpeg qt6-svg imagemagick ffmpeg file) ;;
+        pacman)   # Arch Linux
+            pkgs=(sddm python python-pip pyside6 qt6-declarative qt6-5compat qt6-multimedia qt6-multimedia-ffmpeg qt6-svg imagemagick ffmpeg file) ;;
+        dnf)      # Fedora
+            pkgs=(sddm python3 python3-pip python3-pyside6 qt6-qtdeclarative qt6-qt5compat qt6-qtmultimedia qt6-qtsvg ImageMagick ffmpeg-free file) ;;
         apt-get)
             sudo apt-get update -qq
-            pkgs=(sddm python3 python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick python3-pyside6.qtnetwork
+            pkgs=(sddm python3 python3-pip python3-pyside6.qtwidgets python3-pyside6.qtqml python3-pyside6.qtquick python3-pyside6.qtnetwork
                   qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts
                   qml6-module-qtquick-shapes qml6-module-qt-labs-folderlistmodel qml6-module-qt5compat-graphicaleffects
                   qml6-module-qtmultimedia imagemagick ffmpeg file) ;;
-        dnf)
-            pkgs=(sddm python3 python3-pyside6 qt6-qtdeclarative qt6-qt5compat qt6-qtmultimedia qt6-qtsvg ImageMagick ffmpeg-free file) ;;
         zypper)
-            pkgs=(sddm-qt6 python3 python3-pyside6 qt6-declarative-imports qt6-qt5compat-imports qt6-multimedia-imports ImageMagick ffmpeg file) ;;
+            pkgs=(sddm-qt6 python3 python3-pip python3-pyside6 qt6-declarative-imports qt6-qt5compat-imports qt6-multimedia-imports ImageMagick ffmpeg file) ;;
     esac
     pm_install "$pm" "${pkgs[@]}" || echo "Some packages could not be installed (see above)." >&2
 
     # PySide6 not in the distro repos (or older distro): fall back to pip for the current user
     if ! gui_python_ok; then
         echo "PySide6 not available from $pm - trying pip (user install)..."
-        python3 -m pip install --user PySide6 2>/dev/null \
-            || python3 -m pip install --user --break-system-packages PySide6 \
-            || echo "pip could not install PySide6 either." >&2
+        pip_install_pyside6 || echo "pip could not install PySide6 either." >&2
     fi
 
     missing=$(missing_deps)
     if [ -n "$missing" ]; then
         echo
-        echo "Still missing after installation (install these manually):" >&2
-        echo "$missing" | sed 's/^/  - /' >&2
+        say "Still missing after installation (install these manually): $(echo "$missing" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
         return 1
     fi
-    echo "Dependencies: all installed."
+    say "Dependencies: all installed."
+}
+
+# Called on every normal start of this script: installs whatever is missing, once,
+# then does nothing (the check is quick). A failure only warns - the requested
+# command still runs, and may report what it is missing.
+ensure_dependencies() {
+    [ -z "$(missing_deps)" ] && return 0
+    install_dependencies || echo "Continuing anyway - some features may not work until the missing items are installed." >&2
+    return 0
 }
 
 # ───────────────────────── GUI as a desktop app (used by -install) ─────────────────────────
@@ -291,11 +327,12 @@ install_desktop_app() {
 </svg>
 SVG
 
+    # Exec points at THIS folder's script (the one that works on, and writes to, the dev copy)
     cat > "$data/applications/multibg-settings.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=Multi_Background Settings
-Exec=bash "/usr/share/sddm/themes/Multi_Background/MultiBG.bash"
+Exec=bash "$SELF" -gui
 Icon=multibg-settings
 Terminal=false
 Categories=Settings;
@@ -509,6 +546,15 @@ preview_theme() {
     "$g" --test-mode --theme "$SCRIPT_DIR"
 }
 
+# ───────────────────────── automatic dependency check ─────────────────────────
+# Runs on every start so PySide6 and friends are installed as soon as the script is
+# launched. Skipped for --help, for the small GUI helper commands (their caller
+# already passed this check) and for '-install --no-deps'.
+case "$1" in
+    -h|--help|-rmBG|-setFont|-clearFont|-put|-tap|-untap) ;;
+    *) [ "$2" = "--no-deps" ] || ensure_dependencies ;;
+esac
+
 case "$1" in
     -h|--help)
         usage
@@ -615,11 +661,12 @@ case "$1" in
         ;;
 
     -install)
-        # 1. Dependencies (skip with: -install --no-deps)
+        # 1. Dependencies were already handled by ensure_dependencies above
+        #    (skipped with: -install --no-deps)
         if [ "$2" = "--no-deps" ]; then
             echo "Skipping dependency installation (--no-deps)."
         else
-            install_dependencies || echo "Continuing anyway - some features may not work until the missing items are installed." >&2
+            echo "Dependencies: checked."
         fi
         echo
 
@@ -636,6 +683,9 @@ case "$1" in
         done
 
         sudo cp -r "$SCRIPT_DIR"/* "$THEME_DIR/"
+
+        # Fedora (SELinux): give the copied files the right security labels so the greeter can read them
+        command -v restorecon >/dev/null 2>&1 && sudo restorecon -R "$THEME_DIR" >/dev/null 2>&1
 
         # 3. Make the theme the active one (own drop-in file; doesn't overwrite /etc/sddm.conf)
         sudo mkdir -p /etc/sddm.conf.d
